@@ -44,28 +44,19 @@ async function scrapePlayerDetails(browser, id) {
     }
   });
 
-  const url = `https://guildwar.axiedao.org/guild/mGfOIl8T/members/${id}`;
-  await page.goto(url, { waitUntil: "networkidle0", timeout: 60000 });
-
-  const selectorNombre =
-    "body > main > div.w-full.xl\\:w-\\[1280px\\].min-h-screen.mt-\\[120px\\].p-5 > div.w-full.flex.flex-col.md\\:flex-row.justify-normal.items-center > div.w-full.min-h-\\[230px\\].flex.flex-col.justify-between.mt-auto.items-start.bg-fg-def.p-5.rounded-2xl.md\\:mr-2 > div.flex.flex-col.justify-normal.items-start > p";
-
   try {
+    const url = `https://guildwar.axiedao.org/guild/mGfOIl8T/members/${id}`;
+    await page.goto(url, { waitUntil: "networkidle0", timeout: 60000 });
+
+    const selectorNombre =
+      "body > main > div.w-full.xl\\:w-\\[1280px\\].min-h-screen.mt-\\[120px\\].p-5 > div.w-full.flex.flex-col.md\\:flex-row.justify-normal.items-center > div.w-full.min-h-\\[230px\\].flex.flex-col.justify-between.mt-auto.items-start.bg-fg-def.p-5.rounded-2xl.md\\:mr-2 > div.flex.flex-col.justify-normal.items-start > p";
+
     await page.waitForSelector(selectorNombre, { timeout: 15000 });
-  } catch {
-    console.warn(`⚠️ Nombre no encontrado para el ID ${id}`);
-    await page.close();
-    return null;
-  }
+    const nombre = await page.$eval(selectorNombre, (el) => el.innerText.trim());
 
-  const nombre = await page.$eval(selectorNombre, (el) => el.innerText.trim());
-
-  try {
     await page.evaluate(() => {
       const botones = Array.from(document.querySelectorAll("button"));
-      const boton = botones.find((btn) =>
-        btn.innerText.includes("Guild Points History")
-      );
+      const boton = botones.find((btn) => btn.innerText.includes("Guild Points History"));
       if (boton) boton.click();
     });
 
@@ -74,27 +65,26 @@ async function scrapePlayerDetails(browser, id) {
     await page.waitForSelector("table.w-full.table-auto.text-white", {
       timeout: 10000,
     });
-  } catch (err) {
-    console.warn(`⚠️ No se pudo hacer clic o cargar la tabla para ID ${id}`);
+
+    const pointsHistory = await page.$$eval(
+      "table.w-full.table-auto.text-white tbody tr",
+      (rows) =>
+        rows.map((row) => {
+          const cols = row.querySelectorAll("td");
+          return {
+            totalPoints: cols[0]?.textContent.trim() || null,
+            date: cols[2]?.textContent.trim() || null,
+          };
+        })
+    );
+
     await page.close();
-    return { id, nombre, pointsHistory: [] };
+    return { id, nombre, pointsHistory };
+  } catch (err) {
+    console.warn(`⚠️ Error al procesar ID ${id}:`, err.message);
+    await page.close();
+    return null;
   }
-
-  const pointsHistory = await page.$$eval(
-    "table.w-full.table-auto.text-white tbody tr",
-    (rows) =>
-      rows.map((row) => {
-        const cols = row.querySelectorAll("td");
-        return {
-          totalPoints: cols[0]?.textContent.trim() || null,
-          date: cols[2]?.textContent.trim() || null,
-        };
-      })
-  );
-
-  await page.close();
-
-  return { id, nombre, pointsHistory };
 }
 
 module.exports = async function scrapeHistorico() {
@@ -104,8 +94,13 @@ module.exports = async function scrapeHistorico() {
       args: ["--no-sandbox", "--disable-setuid-sandbox"],
     });
 
-    const ids = await scrapeGuildIds(browser);
-    console.log(`✅ IDs extraídos (${ids.length}):\n`, ids);
+    let ids = [];
+    try {
+      ids = await scrapeGuildIds(browser);
+      console.log(`✅ IDs extraídos (${ids.length}):\n`, ids);
+    } catch (err) {
+      console.warn("⚠️ No se pudieron extraer IDs:", err.message);
+    }
 
     const results = [];
     for (const id of ids) {
@@ -124,10 +119,11 @@ module.exports = async function scrapeHistorico() {
       } else {
         console.log(`❌ No se pudieron extraer datos para ID: ${id}`);
       }
+
+      await new Promise((r) => setTimeout(r, 500)); // Delay para evitar saturación
     }
 
     await browser.close();
-
     return results;
   } catch (error) {
     console.error("❌ Error general:", error);
